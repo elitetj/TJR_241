@@ -150,14 +150,20 @@ void handleTouch() {
     bool touched = readTouch(tx, ty);
 
     // readTouch() always returns landscape fb[] coordinates (verified on hardware).
-    // In portrait mode, convert to logical screen coords so zone checks and gesture
-    // deltas match the coordinates used by the draw functions.
+    // Convert to logical screen coords so zone checks and gesture deltas match
+    // the coordinates used by the draw functions.
     //   rot=1 (USB-left):  logical_x = NATIVE_H-1-ty,  logical_y = tx
+    //   rot=2 (USB-up):    logical_x = NATIVE_W-1-tx,  logical_y = NATIVE_H-1-ty
     //   rot=3 (USB-right): logical_x = ty,              logical_y = NATIVE_W-1-tx
-    if (!g_isLandscape && touched) {
-        int16_t fx = tx, fy = ty;
-        if (g_rotation == 1) { tx = NATIVE_H - 1 - fy;  ty = fx; }
-        else                  { tx = fy;                  ty = NATIVE_W - 1 - fx; }
+    if (touched) {
+        if (!g_isLandscape) {
+            int16_t fx = tx, fy = ty;
+            if (g_rotation == 1) { tx = NATIVE_H - 1 - fy;  ty = fx; }
+            else                  { tx = fy;                  ty = NATIVE_W - 1 - fx; }
+        } else if (g_rotation == 2) {
+            tx = NATIVE_W - 1 - tx;
+            ty = NATIVE_H - 1 - ty;
+        }
     }
 
     // ── Priority routing ─────────────────────────────────────────────────────

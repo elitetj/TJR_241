@@ -68,14 +68,11 @@ static inline void fbPxS(int16_t lx, int16_t ly, uint16_t swapped) {
     if (g_isLandscape) {
         if ((unsigned)lx < NATIVE_W && (unsigned)ly < NATIVE_H)
             fb[(uint32_t)ly * NATIVE_W + lx] = swapped;
-    } else if (g_rotation == 1) {
-        // Portrait rot=1: draw directly into _fpb[ly*NATIVE_H + lx] — identity, no transform.
+    } else {
+        // Portrait rot=1 and rot=3: both write portrait-row-major into _fpb[].
+        // MADCTL (0xC0 / 0x00) handles the 180° difference at display time.
         if ((unsigned)lx < NATIVE_H && (unsigned)ly < NATIVE_W && _fpb)
             _fpb[(uint32_t)ly * NATIVE_H + lx] = swapped;
-    } else {
-        // Portrait USB-right (software-transpose path): fb_x=NATIVE_W-1-ly, fb_y=lx
-        if ((unsigned)lx < NATIVE_H && (unsigned)ly < NATIVE_W)
-            fb[(uint32_t)lx * NATIVE_W + (NATIVE_W - 1 - ly)] = swapped;
     }
 }
 
@@ -95,16 +92,16 @@ static void fbFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t col)
     if (w <= 0 || h <= 0) return;
     uint16_t sc = __builtin_bswap16(col);
     if (g_isLandscape) {
-        // Fast path: contiguous row writes
+        // Fast path: contiguous row writes into fb[].
         int x1 = max((int)x, 0),             y1 = max((int)y, 0);
         int x2 = min((int)(x + w), NATIVE_W), y2 = min((int)(y + h), NATIVE_H);
         for (int row = y1; row < y2; row++) {
             uint16_t *p = fb + (uint32_t)row * NATIVE_W + x1;
             for (int c = x1; c < x2; c++) *p++ = sc;
         }
-    } else if (g_rotation == 1 && _fpb) {
-        // Portrait rot=1: draw into _fpb[ly*NATIVE_H + lx] — portrait row-major, no transform.
-        // Each logical portrait row (fixed ly) is a contiguous run of NATIVE_H pixels in _fpb[].
+    } else if (_fpb) {
+        // Portrait rot=1 and rot=3: both write portrait-row-major into _fpb[].
+        // Each logical portrait row (fixed ly) is a contiguous run of NATIVE_H pixels.
         int lx1 = max((int)x,     0);
         int lx2 = min((int)(x+w), NATIVE_H);
         int ly1 = max((int)y,     0);
@@ -113,18 +110,6 @@ static void fbFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t col)
         if (run <= 0) return;
         for (int ly = ly1; ly < ly2; ly++) {
             uint16_t *p = _fpb + (uint32_t)ly * NATIVE_H + lx1;
-            for (int k = 0; k < run; k++) p[k] = sc;
-        }
-    } else {
-        // Portrait rot=3: logical(lx,ly) → fb[lx*NATIVE_W + (NATIVE_W-1-ly)]
-        // For a fixed lx, varying ly writes descending fb_x — reverse fill.
-        int lx1 = max((int)x, 0),             lx2 = min((int)(x + w), NATIVE_H);
-        int ly1 = max((int)y, 0),             ly2 = min((int)(y + h), NATIVE_W);
-        int run = ly2 - ly1;
-        if (run <= 0) return;
-        for (int lx = lx1; lx < lx2; lx++) {
-            // fb_x = NATIVE_W-1-ly decreases as ly increases; write forward from low fb_x
-            uint16_t *p = fb + (uint32_t)lx * NATIVE_W + (NATIVE_W - ly2);
             for (int k = 0; k < run; k++) p[k] = sc;
         }
     }
@@ -336,8 +321,8 @@ static void fbChar(char c, int16_t cursor_x, int16_t baseline_y,
                 else bit_pos--;
             }
         }
-    } else if (g_rotation == 1 && _fpb) {
-        // Portrait rot=1: draw into _fpb[ly*NATIVE_H + lx] — identity coords, no transform.
+    } else if (_fpb) {
+        // Portrait rot=1 and rot=3: both write portrait-row-major into _fpb[ly*NATIVE_H + lx].
         for (uint8_t row = 0; row < g->height; row++) {
             int16_t fb_y = by + row;
             uint16_t *rp = (fb_y >= 0 && fb_y < NATIVE_W)
@@ -346,16 +331,6 @@ static void fbChar(char c, int16_t cursor_x, int16_t baseline_y,
                 int16_t fx = bx + c2;
                 if (rp && fx >= 0 && fx < NATIVE_H && (byte_val & (1u << bit_pos)))
                     rp[fx] = sc;
-                if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
-                else bit_pos--;
-            }
-        }
-    } else {
-        // Portrait rot=3 (software-transpose path): per-pixel fbPxS.
-        for (uint8_t row = 0; row < g->height; row++) {
-            for (uint8_t c2 = 0; c2 < g->width; c2++) {
-                if (byte_val & (1u << bit_pos))
-                    fbPxS(bx + c2, by + row, sc);
                 if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
                 else bit_pos--;
             }
