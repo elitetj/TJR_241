@@ -68,14 +68,11 @@ static inline void fbPxS(int16_t lx, int16_t ly, uint16_t swapped) {
     if (g_isLandscape) {
         if ((unsigned)lx < NATIVE_W && (unsigned)ly < NATIVE_H)
             fb[(uint32_t)ly * NATIVE_W + lx] = swapped;
-    } else if (g_rotation == 1) {
-        // Portrait rot=1: draw directly into _fpb[ly*NATIVE_H + lx] — identity, no transform.
+    } else {
+        // Portrait rot=1 and rot=3: both write portrait-row-major into _fpb[].
+        // MADCTL (0xC0 / 0x00) handles the 180° difference at display time.
         if ((unsigned)lx < NATIVE_H && (unsigned)ly < NATIVE_W && _fpb)
             _fpb[(uint32_t)ly * NATIVE_H + lx] = swapped;
-    } else {
-        // Portrait USB-right (software-transpose path): fb_x=NATIVE_W-1-ly, fb_y=lx
-        if ((unsigned)lx < NATIVE_H && (unsigned)ly < NATIVE_W)
-            fb[(uint32_t)lx * NATIVE_W + (NATIVE_W - 1 - ly)] = swapped;
     }
 }
 
@@ -95,16 +92,16 @@ static void fbFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t col)
     if (w <= 0 || h <= 0) return;
     uint16_t sc = __builtin_bswap16(col);
     if (g_isLandscape) {
-        // Fast path: contiguous row writes
+        // Fast path: contiguous row writes into fb[].
         int x1 = max((int)x, 0),             y1 = max((int)y, 0);
         int x2 = min((int)(x + w), NATIVE_W), y2 = min((int)(y + h), NATIVE_H);
         for (int row = y1; row < y2; row++) {
             uint16_t *p = fb + (uint32_t)row * NATIVE_W + x1;
             for (int c = x1; c < x2; c++) *p++ = sc;
         }
-    } else if (g_rotation == 1 && _fpb) {
-        // Portrait rot=1: draw into _fpb[ly*NATIVE_H + lx] — portrait row-major, no transform.
-        // Each logical portrait row (fixed ly) is a contiguous run of NATIVE_H pixels in _fpb[].
+    } else if (_fpb) {
+        // Portrait rot=1 and rot=3: both write portrait-row-major into _fpb[].
+        // Each logical portrait row (fixed ly) is a contiguous run of NATIVE_H pixels.
         int lx1 = max((int)x,     0);
         int lx2 = min((int)(x+w), NATIVE_H);
         int ly1 = max((int)y,     0);
@@ -113,18 +110,6 @@ static void fbFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t col)
         if (run <= 0) return;
         for (int ly = ly1; ly < ly2; ly++) {
             uint16_t *p = _fpb + (uint32_t)ly * NATIVE_H + lx1;
-            for (int k = 0; k < run; k++) p[k] = sc;
-        }
-    } else {
-        // Portrait rot=3: logical(lx,ly) → fb[lx*NATIVE_W + (NATIVE_W-1-ly)]
-        // For a fixed lx, varying ly writes descending fb_x — reverse fill.
-        int lx1 = max((int)x, 0),             lx2 = min((int)(x + w), NATIVE_H);
-        int ly1 = max((int)y, 0),             ly2 = min((int)(y + h), NATIVE_W);
-        int run = ly2 - ly1;
-        if (run <= 0) return;
-        for (int lx = lx1; lx < lx2; lx++) {
-            // fb_x = NATIVE_W-1-ly decreases as ly increases; write forward from low fb_x
-            uint16_t *p = fb + (uint32_t)lx * NATIVE_W + (NATIVE_W - ly2);
             for (int k = 0; k < run; k++) p[k] = sc;
         }
     }
@@ -336,8 +321,8 @@ static void fbChar(char c, int16_t cursor_x, int16_t baseline_y,
                 else bit_pos--;
             }
         }
-    } else if (g_rotation == 1 && _fpb) {
-        // Portrait rot=1: draw into _fpb[ly*NATIVE_H + lx] — identity coords, no transform.
+    } else if (_fpb) {
+        // Portrait rot=1 and rot=3: both write portrait-row-major into _fpb[ly*NATIVE_H + lx].
         for (uint8_t row = 0; row < g->height; row++) {
             int16_t fb_y = by + row;
             uint16_t *rp = (fb_y >= 0 && fb_y < NATIVE_W)
@@ -346,16 +331,6 @@ static void fbChar(char c, int16_t cursor_x, int16_t baseline_y,
                 int16_t fx = bx + c2;
                 if (rp && fx >= 0 && fx < NATIVE_H && (byte_val & (1u << bit_pos)))
                     rp[fx] = sc;
-                if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
-                else bit_pos--;
-            }
-        }
-    } else {
-        // Portrait rot=3 (software-transpose path): per-pixel fbPxS.
-        for (uint8_t row = 0; row < g->height; row++) {
-            for (uint8_t c2 = 0; c2 < g->width; c2++) {
-                if (byte_val & (1u << bit_pos))
-                    fbPxS(bx + c2, by + row, sc);
                 if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
                 else bit_pos--;
             }
@@ -494,6 +469,81 @@ void printCentredIn(const char *str,
     int16_t cx = rx + (rw - w) / 2 - x1;
     int16_t cy = ry + (rh - h) / 2;
     fbStr(str, cx, cy + h, col, font);  // cy + h = baseline
+}
+
+
+// ============================================================
+//  SPRITE FONT BLITTER
+//  Renders 1bpp pre-rendered digit sprites into the PSRAM framebuffer.
+//  Mirror of fbChar() — dual landscape / portrait path, pgm_read_byte
+//  for bitmap bytes, direct struct field access (ESP32 flash is memory-mapped).
+//
+//  cx, cy = top-left of the character advance cell.
+//  glyph.xOffset / yOffset are relative to cell top-left (not baseline).
+// ============================================================
+
+// Draw one character at cell position (cx, cy = cell top-left).
+static void drawSpriteChar(const SpriteFont *sf, char c,
+                           int16_t cx, int16_t cy, uint16_t col) {
+    const char *p = strchr(sf->chars, c);
+    if (!p) return;
+    uint8_t idx = (uint8_t)(p - sf->chars);
+
+    const SpriteGlyph *g = &sf->glyphs[idx];
+    uint16_t gw = g->width, gh = g->height;
+    if (!gw || !gh) return;    // space or empty glyph
+
+    const uint8_t *bmp = sf->bitmaps + g->bitmapOffset;
+    int16_t  bx0 = cx + g->xOffset;
+    int16_t  by0 = cy + g->yOffset;
+    uint16_t sc  = __builtin_bswap16(col);
+
+    uint8_t byte_val = pgm_read_byte(bmp++);
+    uint8_t bit_pos  = 7;
+
+    if (g_isLandscape) {
+        for (uint16_t row = 0; row < gh; row++) {
+            int16_t  fb_y = by0 + row;
+            uint16_t *rp  = (fb_y >= 0 && fb_y < NATIVE_H)
+                            ? fb + (uint32_t)fb_y * NATIVE_W : nullptr;
+            for (uint16_t col_px = 0; col_px < gw; col_px++) {
+                int16_t fx = bx0 + (int16_t)col_px;
+                if (rp && fx >= 0 && fx < NATIVE_W && (byte_val & (1u << bit_pos)))
+                    rp[fx] = sc;
+                if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
+                else --bit_pos;
+            }
+        }
+    } else if (_fpb) {
+        // Portrait rot=1/3: write portrait-row-major into _fpb[ly*NATIVE_H + lx].
+        for (uint16_t row = 0; row < gh; row++) {
+            int16_t  fb_y = by0 + row;
+            uint16_t *rp  = (fb_y >= 0 && fb_y < NATIVE_W)
+                            ? _fpb + (uint32_t)fb_y * NATIVE_H : nullptr;
+            for (uint16_t col_px = 0; col_px < gw; col_px++) {
+                int16_t fx = bx0 + (int16_t)col_px;
+                if (rp && fx >= 0 && fx < NATIVE_H && (byte_val & (1u << bit_pos)))
+                    rp[fx] = sc;
+                if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
+                else --bit_pos;
+            }
+        }
+    }
+}
+
+// Draw string left-aligned; x = left edge of first cell, y_top = cell top.
+static void printSpriteLeft(const char *str, int16_t x, int16_t y_top,
+                            uint16_t col, const SpriteFont *sf) {
+    uint16_t adv = sf->xAdvance;
+    for (; *str; str++, x += (int16_t)adv)
+        drawSpriteChar(sf, *str, x, y_top, col);
+}
+
+// Draw string centred on scrW(); y_top = cell top.
+static void printSpriteCentred(const char *str, int16_t y_top,
+                               uint16_t col, const SpriteFont *sf) {
+    int16_t total_w = (int16_t)sf->xAdvance * (int16_t)strlen(str);
+    printSpriteLeft(str, (scrW() - total_w) / 2, y_top, col, sf);
 }
 
 
@@ -754,24 +804,33 @@ void drawLandscape() {
     int16_t barY2 = sh - LANDSCAPE_BAR_REGION;
     int16_t barW2 = sw - PAD * 2;
 
-    // Value cascade: try L1 → L2 → L3 → L4
+    // Value cascade: sprite font (220px) → GFXfont L1(160px) → L2 → L3 → L4
+    // Sprite font has no int8_t offset ceiling; wins for short strings (≤4 chars).
     int16_t valueArea = barY2 - labelBotY - 8;
     char vbuf[14];
     fmtVal(vbuf, sizeof(vbuf), si, v);
 
-    const GFXfont *steps[] = { FONT_VALUE_L1, FONT_VALUE_L2, FONT_VALUE_L3, FONT_VALUE_L4 };
-    const GFXfont *vfont   = FONT_VALUE_L4;
-    for (int s = 0; s < 4; s++) {
-        vfont = steps[s];
-        int16_t adv = monoAdvance(vfont);
-        int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
-        if (vw <= sw - PAD * 2 && fontH(vfont) <= valueArea) break;
-    }
+    int16_t sprW = (int16_t)FONT_VALUE_SPRITE->xAdvance * (int16_t)strlen(vbuf);
+    int16_t sprH = (int16_t)FONT_VALUE_SPRITE->lineHeight;
 
-    int16_t fh      = fontH(vfont);
-    int16_t valTopY = labelBotY + (valueArea - fh) / 2;
-    if (valTopY < labelBotY) valTopY = labelBotY;
-    printCentredMono(vbuf, valTopY, colValue(lsSlot, v), vfont);
+    if (sprW <= sw - LANDSCAPE_SPRITE_PAD * 2 && sprH <= valueArea) {
+        int16_t valTopY = labelBotY + (valueArea - sprH) / 2;
+        if (valTopY < labelBotY) valTopY = labelBotY;
+        printSpriteCentred(vbuf, valTopY, colValue(lsSlot, v), FONT_VALUE_SPRITE);
+    } else {
+        const GFXfont *steps[] = { FONT_VALUE_L1, FONT_VALUE_L2, FONT_VALUE_L3, FONT_VALUE_L4 };
+        const GFXfont *vfont   = FONT_VALUE_L4;
+        for (int s = 0; s < 4; s++) {
+            vfont = steps[s];
+            int16_t adv = monoAdvance(vfont);
+            int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
+            if (vw <= sw - PAD * 2 && fontH(vfont) <= valueArea) break;
+        }
+        int16_t fh      = fontH(vfont);
+        int16_t valTopY = labelBotY + (valueArea - fh) / 2;
+        if (valTopY < labelBotY) valTopY = labelBotY;
+        printCentredMono(vbuf, valTopY, colValue(lsSlot, v), vfont);
+    }
 
     drawBar(lsSlot, si, v, pk, PAD, barY2, barW2, LANDSCAPE_BAR_H, &g_barLS);
 

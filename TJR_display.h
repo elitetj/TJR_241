@@ -129,53 +129,48 @@ static void _dmaPixels(const uint16_t *src, uint32_t count) {
 static inline uint16_t fbColour(uint16_t c) { return __builtin_bswap16(c); }
 
 // ── fbFill ────────────────────────────────────────────────────────────────────
-// For portrait rot=1: fill _fpb[] (the direct portrait render target).
-// For all other modes: fill fb[].
+// Portrait rot=1 and rot=3 both render directly into _fpb[].
+// Landscape rot=0/2 use fb[].
 void fbFill(uint16_t colour) {
     uint16_t s = fbColour(colour);
     uint32_t n = (uint32_t)NATIVE_W * NATIVE_H;
-    uint16_t *buf = (_rot == 1 && _fpb) ? _fpb : fb;
+    uint16_t *buf = ((_rot == 1 || _rot == 3) && _fpb) ? _fpb : fb;
     for (uint32_t i = 0; i < n; i++) buf[i] = s;
 }
 
 // ── fbFlush ───────────────────────────────────────────────────────────────────
-// Landscape (rot=0/2):  DMA fb[] directly.
-// Portrait  rot=1:      _fpb[] is already the render target — DMA directly, no transpose.
-// Portrait  rot=3:      software-transpose fb[] → _fpb, then DMA.
+// rot=0: DMA fb[] directly.
+// rot=1: DMA _fpb[] directly (draw functions wrote portrait-row-major into it).
+// rot=2: reverse-copy fb[] into _fpb[] (180° flip), DMA _fpb[].
+// rot=3: DMA _fpb[] directly — draw functions now write portrait-row-major into
+//        _fpb[] (same layout as rot=1); MADCTL=0x00 produces the 180°-rotated
+//        portrait.  No software transpose needed.
 void fbFlush() {
-    if (_rot == 0 || _rot == 2) {
-        // Landscape — rot=2 (USB-up): 180° flip fb[] in-place, then DMA with same MADCTL.
-        if (_rot == 2) {
-            uint16_t *p = fb, *q = fb + (uint32_t)NATIVE_W * NATIVE_H - 1;
-            while (p < q) { uint16_t t = *p; *p++ = *q; *q-- = t; }
-        }
+    if (_rot == 0) {
         _dispSetAddr(0, 0, NATIVE_W-1, NATIVE_H-1);
         _dmaPixels(fb, (uint32_t)NATIVE_W * NATIVE_H);
         return;
     }
     if (!_fpb) return;
 
-    if (_rot == 1) {
-        // Portrait USB-left: draw functions wrote directly into _fpb[] — just DMA it.
-        _dispSetAddr(0, 0, NATIVE_H-1, NATIVE_W-1);
-        _dmaPixels(_fpb, (uint32_t)NATIVE_H * NATIVE_W);
-    } else {
-        // Portrait rot=3 (USB-right): software-transpose fb[] → _fpb, then DMA.
-        const int BLK = 16;
-        for (int py0 = 0; py0 < NATIVE_W; py0 += BLK) {
-            int py_end = py0 + BLK < NATIVE_W ? py0 + BLK : NATIVE_W;
-            for (int px0 = 0; px0 < NATIVE_H; px0 += BLK) {
-                int px_end = px0 + BLK < NATIVE_H ? px0 + BLK : NATIVE_H;
-                for (int py = py0; py < py_end; py++) {
-                    uint16_t *dst = _fpb + py * NATIVE_H + px0;
-                    for (int px = px0; px < px_end; px++)
-                        *dst++ = fb[px * NATIVE_W + (NATIVE_W - 1 - py)];
-                }
-            }
-        }
-        _dispSetAddr(0, 0, NATIVE_H-1, NATIVE_W-1);
-        _dmaPixels(_fpb, (uint32_t)NATIVE_H * NATIVE_W);
+    if (_rot == 2) {
+        // Landscape USB-up: reverse-copy fb[] into _fpb[] then DMA.
+        // Faster than in-place swap: forward write to _fpb[], no temp variable, fb[] unchanged.
+        uint32_t n   = (uint32_t)NATIVE_W * NATIVE_H;
+        uint16_t *s  = fb + n - 1;
+        uint16_t *d  = _fpb;
+        while (s >= fb) *d++ = *s--;
+        _dispSetAddr(0, 0, NATIVE_W-1, NATIVE_H-1);
+        _dmaPixels(_fpb, n);
+        return;
     }
+
+    // Portrait rot=1 and rot=3: draw functions write directly into _fpb[] in
+    // portrait-row-major order (_fpb[ly * NATIVE_H + lx]).  Just DMA it.
+    // MADCTL (0xC0 for rot=1, 0x00 for rot=3) set by displaySetRotation() handles
+    // the 180° difference between the two portrait orientations.
+    _dispSetAddr(0, 0, NATIVE_H-1, NATIVE_W-1);
+    _dmaPixels(_fpb, (uint32_t)NATIVE_H * NATIVE_W);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -210,7 +205,7 @@ void displaySetRotation(uint8_t rot) {
 // so no extra buffer is needed.
 void displayClearScreen() {
     fbFill(0x0000);   // fills fb[] in landscape, _fpb[] in portrait rot=1
-    uint16_t *buf = (_rot == 1 && _fpb) ? _fpb : fb;
+    uint16_t *buf = ((_rot == 1 || _rot == 3) && _fpb) ? _fpb : fb;
     uint16_t sx = _off_x, sy = _off_y;
     _off_x = 0;  _off_y = 0;
     _dispSetAddr(0, 0, NATIVE_H - 1, NATIVE_W - 1);

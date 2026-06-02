@@ -89,7 +89,7 @@
 // — SPI clock — 36 MHz (from LilyGO source; Waveshare demo says 40 MHz but that's wrong) —
 #define DISPLAY_SPI_MHZ  36
 
-#define FW_VERSION "v0.9"
+#define FW_VERSION "v0.10"
 
 // — EEPROM layout — identical to TJR_mini (same magic, same offsets) —
 #define EE_MAGIC        0xA8
@@ -207,6 +207,7 @@ inline bool isGraph()  { return g_screen == NUM_PAIRS; }
 
 uint32_t g_lastDraw    = 0;
 uint32_t g_lastIMU     = 0;
+
 uint32_t g_warnFirstMs = 0;
 uint32_t g_warnSwipeMs = 0;
 
