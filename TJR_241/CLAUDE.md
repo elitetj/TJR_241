@@ -69,7 +69,7 @@ RM690B0 driver analysis: `/Users/tj/CANBUS/Resources/ESP32-S3-Touch-AMOLED-2.41/
 ## Display Driver — TJR_display.h
 
 Self-contained RM690B0 QSPI driver. No Arduino_GFX, no LVGL — raw ESP-IDF `spi_master` API.  
-All behaviour below confirmed on hardware 2026-06-01.
+All behaviour below confirmed on hardware 2026-06-01/02.
 
 ### Pixel byte order — CRITICAL
 
@@ -79,16 +79,16 @@ The RM690B0 expects **big-endian RGB565**; the ESP32 is little-endian.
 **Rule: never write a C_xxx colour constant directly into `fb[]`.**  
 Always call `fbColour(c)` (= `__builtin_bswap16(c)`) before writing any pixel.
 
-### Framebuffer
+### Framebuffers
 
 ```cpp
-uint16_t *fb;   // landscape PSRAM buffer, 600×450 = 270,000 pixels
-                // Pixel (x, y): fb[y * NATIVE_W + x]
-                // Always draw in landscape coordinates regardless of rotation.
+uint16_t *fb;    // landscape PSRAM buffer, 600×450 = 270,000 pixels
+                 // Pixel (x, y): fb[y * NATIVE_W + x]
+uint16_t *_fpb;  // second PSRAM buffer — render target for portrait (rot=1/3)
+                 // and reverse-copy target for landscape USB-up (rot=2)
 ```
 
-- Allocated via `heap_caps_malloc(600*450*2, MALLOC_CAP_SPIRAM)` — **PSRAM=enabled is mandatory**
-- A second PSRAM buffer `_fpb` (same size) is the **portrait render target** for rot=1 (see below)
+- Both allocated via `heap_caps_malloc(600*450*2, MALLOC_CAP_SPIRAM)` — **PSRAM=enabled is mandatory**
 - `fbFlush()` handles all four orientations automatically
 - `fbFill(colour)` / `fbColour(c)` / `fbFlush()` / `displaySetBrightness()` / `displaySetRotation()` / `displayClearScreen()` are the public API
 
@@ -100,28 +100,28 @@ The Waveshare panel is mounted **180° rotated** relative to LilyGO T4-S3. All M
 | rot | Physical position | MADCTL | off_x | off_y | Render target | Notes |
 |-----|------------------|--------|-------|-------|---------------|-------|
 | 0 | Landscape USB-down  | 0xA0 | 0  | 16 | `fb[]`   | Direct DMA |
-| 1 | Portrait  USB-left  | 0xC0 | 16 | 0  | `_fpb[]` | Direct DMA, draw into `_fpb[]` directly |
-| 2 | Landscape USB-up    | 0xA0 | 0  | 16 | `fb[]`   | In-place 180° pixel swap before DMA |
-| 3 | Portrait  USB-right | 0x00 | 16 | 0  | `_fpb[]` | Software transpose fb[]→_fpb[], then DMA |
+| 1 | Portrait  USB-left  | 0xC0 | 16 | 0  | `_fpb[]` | Direct DMA — draw functions write portrait-row-major into `_fpb[]` |
+| 2 | Landscape USB-up    | 0xA0 | 0  | 16 | `_fpb[]` | Reverse-copy `fb[]`→`_fpb[]`, then DMA |
+| 3 | Portrait  USB-right | 0x00 | 16 | 0  | `_fpb[]` | Direct DMA — same draw path as rot=1; MADCTL=0x00 produces 180° flip |
 
-### Portrait rendering architecture (rot=1)
+### Portrait rendering architecture (rot=1 and rot=3)
 
-For rot=1, all draw functions write **directly into `_fpb[]`** using logical portrait coordinates with no coordinate transform:
+Both portrait rotations write **directly into `_fpb[]`** in portrait-row-major order — no coordinate transform:
 
 ```
 _fpb[ly * NATIVE_H + lx]   where lx ∈ [0, NATIVE_H-1=449], ly ∈ [0, NATIVE_W-1=599]
 ```
 
-- `fbFill()`, `fbFillRect()`, `fbChar()` all write to `_fpb[]` in portrait mode
-- `fbFlush()` for rot=1: DMA `_fpb[]` directly with MADCTL=0xC0 + portrait window — **no software transpose**
-- `displayClearScreen()` also clears and DMAs `_fpb[]` in portrait mode
+- `fbFill()`, `fbFillRect()`, `fbChar()` all use this layout for both rot=1 and rot=3
+- `fbFlush()` for both: DMA `_fpb[]` directly with portrait window — no software transpose
+- MADCTL=0xC0 (rot=1) vs MADCTL=0x00 (rot=3) produces the 180° visual difference between the two orientations
 - `fbFlush()` uses `_rot` (not `g_isLandscape`) to select the buffer, since `g_isLandscape` isn't visible in `TJR_display.h`
 
-**Performance:** portrait frame ≈ landscape frame (~43ms → ~23fps). The ~30ms software transpose is eliminated.
+**Performance (confirmed on hardware 2026-06-02):** all 4 orientations run at ~20fps at the 20 Hz cap (50ms budget). Uncapped measured: ~20fps landscape, ~20fps portrait — essentially identical.
 
 ### rot=2 (USB-up) 180° flip
 
-Since the panel doesn't support a clean 180° landscape MADCTL, `fbFlush()` for rot=2 does an in-place pixel swap of `fb[]` (135,000 swaps, ~14ms) before DMAs with MADCTL=0xA0. All draw code is identical to rot=0.
+`fbFlush()` for rot=2 reverse-copies `fb[]` into `_fpb[]` (forward write, no temp variable) then DMAs `_fpb[]` with MADCTL=0xA0. Draw code is identical to rot=0 — the flip is transparent to draw functions.
 
 ### Panel gutter
 
@@ -166,7 +166,7 @@ Same chip, same raw I2C code, same axis→rotation mapping:
 
 ---
 
-## Touch — FT6336 (confirmed, all 4 rotations)
+## Touch — FT6336 (confirmed, all 4 rotations, 2026-06-02)
 
 The touch sensor's coordinate space is fixed in landscape panel coordinates, independent of display rotation. The single formula below is correct for all rotations:
 
@@ -180,11 +180,12 @@ ty = rx;                   // landscape fb y
 
 No `switch` on `g_rotation`. No scaling.
 
-Portrait touch coordinates are transformed in `handleTouch()` (TJR_touch.h) after `readTouch()`:
-- rot=1: `tx = NATIVE_H-1 - fty;  ty = ftx;`  (landscape fb → logical portrait)
-- rot=3: `tx = fty;  ty = NATIVE_W-1 - ftx;`
+Touch coordinates are then transformed in `handleTouch()` (TJR_touch.h) to match the draw coordinate system for each rotation:
 
-This converts landscape fb[] coords to logical screen coords so gesture deltas and zone checks match draw-function coordinates.
+- rot=0: no transform — landscape fb coords match draw coords directly
+- rot=1: `tx = NATIVE_H-1 - fty;  ty = ftx;`
+- rot=2: `tx = NATIVE_W-1 - ftx;  ty = NATIVE_H-1 - fty;`  ← both axes inverted to match display flip
+- rot=3: `tx = fty;  ty = NATIVE_W-1 - ftx;`
 
 Physical corners: top-right=raw(~0,~0), bot-right=raw(~449,~0), top-left=raw(~0,~599), bot-left=raw(~449,~599).
 
@@ -241,12 +242,12 @@ GFXglyph fonts (via `ttf2gfx.py`) for labels, units, MIN/MAX, settings menu. Onl
 | `TJR_can.h` | Done | CAN_TX=1, CAN_RX=8 |
 | `TJR_simdata.h` | Done | Verbatim copy |
 | `TJR_eeprom.h` | Done | Verbatim copy |
-| `TJR_display.h` | **Done** | All hardware verified — see above |
+| `TJR_display.h` | **Done** | All hardware verified — all 4 orientations confirmed |
 | `TJR_gfxfont.h` | **Done** | GFXfont/GFXglyph struct defs (no Arduino_GFX dep) |
 | `TJR_layout.h` | **Done** | 600×450 geometry, font aliases |
 | `TJR_draw.h` | **Done** | Full draw layer: fb primitives + GFXfont blitter + gauge draw |
-| `TJR_241.ino` | **Done v0.9** | Full loop: all subsystems wired, all orientations correct |
-| `TJR_touch.h` | **Done** | Gesture system, warn auto-jump, threshold drag |
+| `TJR_241.ino` | **Done v0.9** | Full loop: all subsystems wired, all orientations confirmed ~20fps |
+| `TJR_touch.h` | **Done** | Gesture system, warn auto-jump, threshold drag, all 4 rotations confirmed |
 | `TJR_settings.h` | **Done** | Units + brightness overlay, slider drag |
 | `TJR_picker.h` | **Done** | Signal picker, alpha-sorted, scrollable |
 | `TJR_graph.h` | **Done** | Rolling graph screen, 600×450 layout |
@@ -267,10 +268,10 @@ arduino-cli compile \
   --export-binaries \
   /Users/tj/CANBUS/TJR_241
 
-# Flash
+# Flash — port enumerates as usbmodem101 or usbmodem1101 depending on connection
 ESPTOOL=~/Library/Arduino15/packages/esp32/tools/esptool_py/5.2.0/esptool
 BUILD=/Users/tj/CANBUS/TJR_241/build/esp32.esp32.waveshare_esp32_s3_touch_amoled_241
-$ESPTOOL --chip esp32s3 --port /dev/cu.usbmodem1101 \
+$ESPTOOL --chip esp32s3 --port /dev/cu.usbmodem101 \
   --baud 921600 --before default-reset --after hard-reset \
   write-flash -z \
   0x0000 "$BUILD/TJR_241.ino.bootloader.bin" \
