@@ -75,7 +75,7 @@ void eepromLoad() {
   uint8_t savedRot = EEPROM.read(EE_ADDR_ROT);
   if (savedRot <= 3) {
     g_rotation    = savedRot;
-    g_isLandscape = (savedRot & 1);
+    g_isLandscape = !(savedRot & 1);  // rot 0,2 = landscape; rot 1,3 = portrait
   }
 }
 

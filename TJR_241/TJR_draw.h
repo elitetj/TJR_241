@@ -473,6 +473,81 @@ void printCentredIn(const char *str,
 
 
 // ============================================================
+//  SPRITE FONT BLITTER
+//  Renders 1bpp pre-rendered digit sprites into the PSRAM framebuffer.
+//  Mirror of fbChar() — dual landscape / portrait path, pgm_read_byte
+//  for bitmap bytes, direct struct field access (ESP32 flash is memory-mapped).
+//
+//  cx, cy = top-left of the character advance cell.
+//  glyph.xOffset / yOffset are relative to cell top-left (not baseline).
+// ============================================================
+
+// Draw one character at cell position (cx, cy = cell top-left).
+static void drawSpriteChar(const SpriteFont *sf, char c,
+                           int16_t cx, int16_t cy, uint16_t col) {
+    const char *p = strchr(sf->chars, c);
+    if (!p) return;
+    uint8_t idx = (uint8_t)(p - sf->chars);
+
+    const SpriteGlyph *g = &sf->glyphs[idx];
+    uint16_t gw = g->width, gh = g->height;
+    if (!gw || !gh) return;    // space or empty glyph
+
+    const uint8_t *bmp = sf->bitmaps + g->bitmapOffset;
+    int16_t  bx0 = cx + g->xOffset;
+    int16_t  by0 = cy + g->yOffset;
+    uint16_t sc  = __builtin_bswap16(col);
+
+    uint8_t byte_val = pgm_read_byte(bmp++);
+    uint8_t bit_pos  = 7;
+
+    if (g_isLandscape) {
+        for (uint16_t row = 0; row < gh; row++) {
+            int16_t  fb_y = by0 + row;
+            uint16_t *rp  = (fb_y >= 0 && fb_y < NATIVE_H)
+                            ? fb + (uint32_t)fb_y * NATIVE_W : nullptr;
+            for (uint16_t col_px = 0; col_px < gw; col_px++) {
+                int16_t fx = bx0 + (int16_t)col_px;
+                if (rp && fx >= 0 && fx < NATIVE_W && (byte_val & (1u << bit_pos)))
+                    rp[fx] = sc;
+                if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
+                else --bit_pos;
+            }
+        }
+    } else if (_fpb) {
+        // Portrait rot=1/3: write portrait-row-major into _fpb[ly*NATIVE_H + lx].
+        for (uint16_t row = 0; row < gh; row++) {
+            int16_t  fb_y = by0 + row;
+            uint16_t *rp  = (fb_y >= 0 && fb_y < NATIVE_W)
+                            ? _fpb + (uint32_t)fb_y * NATIVE_H : nullptr;
+            for (uint16_t col_px = 0; col_px < gw; col_px++) {
+                int16_t fx = bx0 + (int16_t)col_px;
+                if (rp && fx >= 0 && fx < NATIVE_H && (byte_val & (1u << bit_pos)))
+                    rp[fx] = sc;
+                if (bit_pos == 0) { byte_val = pgm_read_byte(bmp++); bit_pos = 7; }
+                else --bit_pos;
+            }
+        }
+    }
+}
+
+// Draw string left-aligned; x = left edge of first cell, y_top = cell top.
+static void printSpriteLeft(const char *str, int16_t x, int16_t y_top,
+                            uint16_t col, const SpriteFont *sf) {
+    uint16_t adv = sf->xAdvance;
+    for (; *str; str++, x += (int16_t)adv)
+        drawSpriteChar(sf, *str, x, y_top, col);
+}
+
+// Draw string centred on scrW(); y_top = cell top.
+static void printSpriteCentred(const char *str, int16_t y_top,
+                               uint16_t col, const SpriteFont *sf) {
+    int16_t total_w = (int16_t)sf->xAdvance * (int16_t)strlen(str);
+    printSpriteLeft(str, (scrW() - total_w) / 2, y_top, col, sf);
+}
+
+
+// ============================================================
 //  COLOUR HELPERS
 //  Same logic as TJR_mini — check thresholds, return RGB565 colour.
 //  Declared after g_nightMode, g_warnHigh[], g_warnLow[] are in scope.
@@ -729,24 +804,33 @@ void drawLandscape() {
     int16_t barY2 = sh - LANDSCAPE_BAR_REGION;
     int16_t barW2 = sw - PAD * 2;
 
-    // Value cascade: try L1 → L2 → L3 → L4
+    // Value cascade: sprite font (220px) → GFXfont L1(160px) → L2 → L3 → L4
+    // Sprite font has no int8_t offset ceiling; wins for short strings (≤4 chars).
     int16_t valueArea = barY2 - labelBotY - 8;
     char vbuf[14];
     fmtVal(vbuf, sizeof(vbuf), si, v);
 
-    const GFXfont *steps[] = { FONT_VALUE_L1, FONT_VALUE_L2, FONT_VALUE_L3, FONT_VALUE_L4 };
-    const GFXfont *vfont   = FONT_VALUE_L4;
-    for (int s = 0; s < 4; s++) {
-        vfont = steps[s];
-        int16_t adv = monoAdvance(vfont);
-        int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
-        if (vw <= sw - PAD * 2 && fontH(vfont) <= valueArea) break;
-    }
+    int16_t sprW = (int16_t)FONT_VALUE_SPRITE->xAdvance * (int16_t)strlen(vbuf);
+    int16_t sprH = (int16_t)FONT_VALUE_SPRITE->lineHeight;
 
-    int16_t fh      = fontH(vfont);
-    int16_t valTopY = labelBotY + (valueArea - fh) / 2;
-    if (valTopY < labelBotY) valTopY = labelBotY;
-    printCentredMono(vbuf, valTopY, colValue(lsSlot, v), vfont);
+    if (sprW <= sw - LANDSCAPE_SPRITE_PAD * 2 && sprH <= valueArea) {
+        int16_t valTopY = labelBotY + (valueArea - sprH) / 2;
+        if (valTopY < labelBotY) valTopY = labelBotY;
+        printSpriteCentred(vbuf, valTopY, colValue(lsSlot, v), FONT_VALUE_SPRITE);
+    } else {
+        const GFXfont *steps[] = { FONT_VALUE_L1, FONT_VALUE_L2, FONT_VALUE_L3, FONT_VALUE_L4 };
+        const GFXfont *vfont   = FONT_VALUE_L4;
+        for (int s = 0; s < 4; s++) {
+            vfont = steps[s];
+            int16_t adv = monoAdvance(vfont);
+            int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
+            if (vw <= sw - PAD * 2 && fontH(vfont) <= valueArea) break;
+        }
+        int16_t fh      = fontH(vfont);
+        int16_t valTopY = labelBotY + (valueArea - fh) / 2;
+        if (valTopY < labelBotY) valTopY = labelBotY;
+        printCentredMono(vbuf, valTopY, colValue(lsSlot, v), vfont);
+    }
 
     drawBar(lsSlot, si, v, pk, PAD, barY2, barW2, LANDSCAPE_BAR_H, &g_barLS);
 

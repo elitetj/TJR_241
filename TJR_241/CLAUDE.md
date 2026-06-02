@@ -202,16 +202,28 @@ The 2.41" has ~2.5× the pixel area of TJR_mini. All layout pixel math must be r
 
 ---
 
-## Large Value Fonts — Sprite Approach
+## Large Value Fonts — Sprite Approach (implemented v0.10)
 
 GFXglyph stores offsets as int8_t (−128..127) — safe ceiling ~160px.  
-For the 2.41" we want 200px+ main values. Use **pre-rendered 1bpp digit sprites** instead.
+For the 2.41" we use **pre-rendered 1bpp digit sprites** at 220px — no size ceiling.
 
-1. **`Tools/gen_digit_sprites.py`** — Python/Pillow: takes `ShareTechMono-Regular.ttf` + px size, outputs 1bpp packed C header for `0123456789.- ` (13 chars).
-2. **`drawDigit(char c, int x, int y, uint16_t colour)`** — blitter into PSRAM fb, colourised at render time.
-3. Same mono centering rule as TJR_mini: use `xAdvance × charCount`, never bounding-box width.
+**Files:**
+- `Tools/gen_digit_sprites.py` — Python/Pillow generator. Run once to regenerate the header:  
+  `python3 Tools/gen_digit_sprites.py ShareTechMono-Regular.ttf 220 ShareTechMono_220px_sprites.h ShareTechMono_220px`  
+  (TTF source is in TJR_mini/ — copy or symlink as needed)
+- `TJR_spritefont.h` — `SpriteGlyph` / `SpriteFont` struct defs
+- `ShareTechMono_220px_sprites.h` — generated 1bpp data (24 KB, 13 glyphs)
 
-GFXglyph fonts (via `ttf2gfx.py`) for labels, units, MIN/MAX, settings menu. Only the large main value uses sprites.
+**Landscape cascade** (drawLandscape, TJR_draw.h):
+1. **220px sprite** — fits strings ≤ 5 chars (usable threshold `LANDSCAPE_SPRITE_PAD=2`, so 596px)  
+   Covers RPM "9999"/"10000", gear, voltage, temps <100°
+2. **160px GFXfont (L1)** — 6-char fallback
+3. **130px / 90px / 56px GFXfont (L2-L4)** — progressively shorter strings
+
+**Blitter functions** (TJR_draw.h): `drawSpriteChar`, `printSpriteLeft`, `printSpriteCentred`.  
+All use advance-based centering: `xAdvance × strlen` — never bounding-box width.
+
+GFXglyph fonts (via `ttf2gfx.py`) for all other text: labels, units, MIN/MAX, settings, DTC.
 
 **Rule: always use advance-based (mono) centering for numeric values.** Never `getTextBounds` width on a changing number — causes jiggle.
 
@@ -245,15 +257,17 @@ GFXglyph fonts (via `ttf2gfx.py`) for labels, units, MIN/MAX, settings menu. Onl
 | `TJR_display.h` | **Done** | All hardware verified — all 4 orientations confirmed |
 | `TJR_gfxfont.h` | **Done** | GFXfont/GFXglyph struct defs (no Arduino_GFX dep) |
 | `TJR_layout.h` | **Done** | 600×450 geometry, font aliases |
-| `TJR_draw.h` | **Done** | Full draw layer: fb primitives + GFXfont blitter + gauge draw |
-| `TJR_241.ino` | **Done v0.9** | Full loop: all subsystems wired, all orientations confirmed ~20fps |
+| `TJR_draw.h` | **Done** | Full draw layer: fb primitives + GFXfont blitter + sprite blitter + gauge draw |
+| `TJR_241.ino` | **Done v0.10** | Full loop: all subsystems wired, all orientations confirmed ~20fps |
 | `TJR_touch.h` | **Done** | Gesture system, warn auto-jump, threshold drag, all 4 rotations confirmed |
 | `TJR_settings.h` | **Done** | Units + brightness overlay, slider drag |
 | `TJR_picker.h` | **Done** | Signal picker, alpha-sorted, scrollable |
 | `TJR_graph.h` | **Done** | Rolling graph screen, 600×450 layout |
 | `TJR_dtc.h` | **Done** | DTC/CEL page, 200+ code lookup table |
 | `TJR_ota.h` | **Done** | WiFi AP OTA, YES/NO confirm, progress bar |
-| `Tools/gen_digit_sprites.py` | TODO | 1bpp sprites for >160px landscape values |
+| `TJR_spritefont.h` | **Done** | SpriteGlyph/SpriteFont struct defs |
+| `ShareTechMono_220px_sprites.h` | **Done** | 220px 1bpp sprite font, 13 glyphs, 24 KB |
+| `Tools/gen_digit_sprites.py` | **Done** | Pillow-based generator — run to regenerate at any size |
 
 > **Before committing any functional change:** bump `FW_VERSION` in `TJR_241.ino`.
 

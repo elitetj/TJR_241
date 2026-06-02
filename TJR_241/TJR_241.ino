@@ -89,7 +89,7 @@
 // — SPI clock — 36 MHz (from LilyGO source; Waveshare demo says 40 MHz but that's wrong) —
 #define DISPLAY_SPI_MHZ  36
 
-#define FW_VERSION "v0.9"
+#define FW_VERSION "v0.11"
 
 // — EEPROM layout — identical to TJR_mini (same magic, same offsets) —
 #define EE_MAGIC        0xA8
@@ -232,9 +232,9 @@ SettingsZone g_otaZYes, g_otaZNo, g_otaZExit;
 // displaySetBrightness — are defined in TJR_display.h (included above).
 
 // Fade display brightness from/to over 500 ms (50 × 10 ms steps).
-static void fadeBrightness(uint8_t from, uint8_t to) {
-  for (int i = 0; i <= 50; i++) {
-    int16_t lev = (int16_t)from + ((int16_t)to - (int16_t)from) * i / 50;
+static void fadeBrightness(uint8_t from, uint8_t to, uint8_t steps = 50) {
+  for (int i = 0; i <= steps; i++) {
+    int16_t lev = (int16_t)from + ((int16_t)to - (int16_t)from) * i / steps;
     displaySetBrightness((uint8_t)constrain(lev, 0, 255));
     delay(10);
   }
@@ -391,6 +391,7 @@ void updateOrientation() {
 #include "TJR_graph.h"     // rolling graph screen
 #include "TJR_picker.h"    // signal picker overlay
 #include "TJR_settings.h"  // settings overlay (units + brightness)
+#include "TJR_splash.h"    // boot splash — 450×450 RGB565 bitmap
 
 
 // ============================================================
@@ -424,17 +425,20 @@ void setup() {
   if (!displayInit()) {
     Serial.println("ERROR: displayInit failed — check wiring and PSRAM=enabled");
   } else {
-    // Rotation 0 = landscape CCW (600×450, USB connector on left side)
-    displaySetRotation(0);
-    g_rotation    = 0;
-    g_isLandscape = true;
+    // Use last-known rotation from EEPROM (eepromLoad set g_rotation/g_isLandscape)
+    displaySetRotation(g_rotation);
 
-    // First-boot test: solid green fill to confirm display is alive.
-    // This will be replaced by the real draw loop once layout is implemented.
-    fbFill(C_GREEN);
+    // Splash screen — fade in, hold, fade out; first gauge frame fades back in
+    displaySetBrightness(0);
+    fbFill(C_BG);
+    fbBitmap16((scrW() - SPLASH_W) / 2, (scrH() - SPLASH_H) / 2,
+               SPLASH_W, SPLASH_H, splash_data);
     fbFlush();
-    displaySetBrightness(128);
-    Serial.println("Display: green test frame pushed");
+    uint8_t splashBright = (uint8_t)((uint16_t)(g_nightMode ? g_brightNight : g_brightDay) * 255 / 100);
+    fadeBrightness(0, splashBright);
+    delay(2000);
+    fadeBrightness(splashBright, 0, 200);
+    Serial.println("Display: splash complete");
   }
 
   // Start CAN task on core 0.
@@ -593,6 +597,12 @@ void loop() {
     else if (isGraph())      { graphAddSample(g_val[g_graphSI]); drawGraph(); }
     else if (g_isLandscape)  drawLandscape();
     else                     drawPortrait();
+    // First frame: gauge is now in the framebuffer — fade brightness up from black
+    if (g_gaugeFadeIn) {
+      uint8_t targetRaw = (uint8_t)((uint16_t)(g_nightMode ? g_brightNight : g_brightDay) * 255 / 100);
+      fadeBrightness(0, targetRaw);
+      g_gaugeFadeIn = false;
+    }
   }
 }
 

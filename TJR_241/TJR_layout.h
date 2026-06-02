@@ -14,12 +14,21 @@
 // Must come before any font header that uses GFXglyph / GFXfont types.
 #include "TJR_gfxfont.h"
 
+// ── Sprite font struct definitions ───────────────────────────────────────────
+// SpriteFont / SpriteGlyph types — must come before sprite font data headers.
+#include "TJR_spritefont.h"
+
 // ── Font data headers ────────────────────────────────────────────────────────
-// Numeric-only fonts (ASCII 45-57: - . / 0-9) — tight glyph bitmaps, smaller flash
-#include "ShareTechMono_100px.h"  // portrait main value (primary)
-#include "ShareTechMono_160px.h"  // landscape cascade step 1 (largest)
+// Sprite font (1bpp pre-rendered) — no GFXglyph int8_t ceiling; 220px safe.
+#include "ShareTechMono_220px_sprites.h"  // landscape cascade step 0 (largest, short strings)
+
+// Numeric-only GFXglyph fonts (ASCII 45-57: - . / 0-9) — landscape cascade steps 1-3
+#include "ShareTechMono_160px.h"  // landscape cascade step 1
 #include "ShareTechMono_130px.h"  // landscape cascade step 2
 #include "ShareTechMono_90px.h"   // landscape cascade step 3
+
+// Numeric-only GFXglyph font — portrait main value
+#include "ShareTechMono_100px.h"  // portrait value primary
 
 // Full ASCII 32-126 fonts — labels, units, headings, settings text
 #include "ShareTechMono_56px.h"   // headings, landscape cascade step 4, portrait value fallback
@@ -49,11 +58,13 @@
 #define FONT_VALUE_P    (&ShareTechMono_100px)  // portrait primary (numeric-only font)
 #define FONT_VALUE_P_FB (&ShareTechMono_56px)   // portrait fallback (full ASCII covers all fmtVal output)
 
-// Landscape value cascade: steps tried in order until string fits in scrW - 2×LANDSCAPE_PAD
-#define FONT_VALUE_L1   (&ShareTechMono_160px)  // landscape step 1 — largest
-#define FONT_VALUE_L2   (&ShareTechMono_130px)  // landscape step 2
-#define FONT_VALUE_L3   (&ShareTechMono_90px)   // landscape step 3
-#define FONT_VALUE_L4   (&ShareTechMono_56px)   // landscape step 4 — always fits
+// Landscape value cascade: sprite step 0 tried first in drawLandscape(),
+// then GFXfont steps L1-L4 in order until string fits in scrW - 2×LANDSCAPE_PAD.
+#define FONT_VALUE_SPRITE (&ShareTechMono_220px)  // landscape step 0 — sprite, no size ceiling
+#define FONT_VALUE_L1   (&ShareTechMono_160px)    // landscape step 1 — GFXfont fallback
+#define FONT_VALUE_L2   (&ShareTechMono_130px)    // landscape step 2
+#define FONT_VALUE_L3   (&ShareTechMono_90px)     // landscape step 3
+#define FONT_VALUE_L4   (&ShareTechMono_56px)     // landscape step 4 — always fits
 
 
 // ── Portrait geometry ─────────────────────────────────────────────────────────
@@ -83,6 +94,7 @@
 
 // Horizontal margin — keeps text clear of panel rounded corners
 #define LANDSCAPE_PAD         24
+#define LANDSCAPE_SPRITE_PAD   2  // looser fit threshold for centred sprite values only
 
 // Bar height
 #define LANDSCAPE_BAR_H       16
