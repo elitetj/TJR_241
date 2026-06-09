@@ -22,7 +22,7 @@
 
 
 // ── Signal / slot counts ─────────────────────────────────────────────────────
-#define NUM_SIGNALS  75
+#define NUM_SIGNALS  79
 #define NUM_PAIRS     5
 #define NUM_SLOTS    15
 
@@ -197,6 +197,14 @@ static const ParamDef PARAMS[NUM_SIGNALS] = {
 {0x3E9,4,5,false,false,0,1000.0f, 0,  "TGT LAM",    "Lam",  0.6f, 1.6f,0.75f,1.25f, 0.6f, 1.6f, 3,0.005f,UNIT_TYPE_LAMBDA},
 // [74] Injector Pressure Differential — signed kPa (0x471 bytes 0-1)
 {0x471,0,1,true, false,0, 10.0f,  0,  "INJ P DIFF", "kPa",  -100, 1000, -100,  800, -100, 1000, 1, 1.0f, UNIT_TYPE_PRESS_G},
+// [75] Tyre Pressure Front Left — gauge kPa (0x6F0 bytes 0-1)
+{0x6F0,0,1,false,false,0, 10.0f,101.3f,"TYRE FL",   "kPa",     0,   400,  140,  300,    0,  400, 1, 1.0f, UNIT_TYPE_PRESS_G},
+// [76] Tyre Pressure Front Right — gauge kPa (0x6F0 bytes 2-3)
+{0x6F0,2,3,false,false,0, 10.0f,101.3f,"TYRE FR",   "kPa",     0,   400,  140,  300,    0,  400, 1, 1.0f, UNIT_TYPE_PRESS_G},
+// [77] Tyre Pressure Rear Left — gauge kPa (0x6F0 bytes 4-5)
+{0x6F0,4,5,false,false,0, 10.0f,101.3f,"TYRE RL",   "kPa",     0,   400,  140,  300,    0,  400, 1, 1.0f, UNIT_TYPE_PRESS_G},
+// [78] Tyre Pressure Rear Right — gauge kPa (0x6F0 bytes 6-7)
+{0x6F0,6,7,false,false,0, 10.0f,101.3f,"TYRE RR",   "kPa",     0,   400,  140,  300,    0,  400, 1, 1.0f, UNIT_TYPE_PRESS_G},
 };
 
 

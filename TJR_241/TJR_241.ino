@@ -89,7 +89,7 @@
 // — SPI clock — 36 MHz (from LilyGO source; Waveshare demo says 40 MHz but that's wrong) —
 #define DISPLAY_SPI_MHZ  36
 
-#define FW_VERSION "v0.15"
+#define FW_VERSION "v0.16"
 
 // — EEPROM layout —
 #define EE_MAGIC        0xA8
