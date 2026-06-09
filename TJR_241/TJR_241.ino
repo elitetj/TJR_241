@@ -89,9 +89,9 @@
 // — SPI clock — 36 MHz (from LilyGO source; Waveshare demo says 40 MHz but that's wrong) —
 #define DISPLAY_SPI_MHZ  36
 
-#define FW_VERSION "v0.11"
+#define FW_VERSION "v0.13"
 
-// — EEPROM layout — identical to TJR_mini (same magic, same offsets) —
+// — EEPROM layout —
 #define EE_MAGIC        0xA8
 #define EE_ADDR_MAGIC     0
 #define EE_ADDR_PAIR      1
@@ -103,7 +103,8 @@
 #define EE_ADDR_WARNHI   81
 #define EE_ADDR_GRAPH_SI 142
 #define EE_ADDR_ROT     143
-#define EE_SIZE         144
+#define EE_ADDR_QUAD    144   // 4 bytes: quad-screen signal indices 0..3
+#define EE_SIZE         148
 #define EE_DEBOUNCE_MS 2000
 
 // — Colours (RGB565) — same palette as TJR_mini —
@@ -194,6 +195,11 @@ uint8_t      g_pickerOrder[NUM_SIGNALS];
 SettingsZone g_pickerZCancel;
 SettingsZone g_pickerZList;
 
+// — Quad (4-param) screen state —
+uint8_t g_quadParam[4]  = {0, 1, 2, 3};  // signal index for each cell; persisted to EEPROM
+bool    g_pickerForQuad = false;
+int     g_pickerQuadIdx = 0;
+
 // — Rolling graph state —
 #define  GRAPH_BUF_LEN    100   // 5 s history at 20 fps
 uint8_t  g_graphSI        = 2;  // default: THROTTLE
@@ -202,8 +208,9 @@ int      g_graphHead      = 0;
 int      g_graphCount     = 0;
 float    g_graphScaleMin  =  1e38f;
 float    g_graphScaleMax  = -1e38f;
-#define  NUM_SCREENS      (NUM_PAIRS + 1)
-inline bool isGraph()  { return g_screen == NUM_PAIRS; }
+#define  NUM_SCREENS      (NUM_PAIRS + 2)   // pairs + quad + graph
+inline bool isQuad()   { return g_screen == NUM_PAIRS; }
+inline bool isGraph()  { return g_screen == NUM_PAIRS + 1; }
 
 uint32_t g_lastDraw    = 0;
 uint32_t g_lastIMU     = 0;
@@ -594,6 +601,7 @@ void loop() {
     else if (g_otaMode)      drawOta();
     else if (g_dtcPageOpen)  drawDtcPage();
     else if (g_settingsOpen) drawSettings();
+    else if (isQuad())       drawQuad();
     else if (isGraph())      { graphAddSample(g_val[g_graphSI]); drawGraph(); }
     else if (g_isLandscape)  drawLandscape();
     else                     drawPortrait();

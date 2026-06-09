@@ -7,9 +7,9 @@
 //  Safe to copy EEPROM image between boards if slot layout is
 //  unchanged (same NUM_SLOTS, NUM_SIGNALS, same EE_ADDR_* offsets).
 //
-//  EEPROM layout (144 bytes, magic 0xA8):
+//  EEPROM layout (148 bytes, magic 0xA8):
 //    0         magic byte
-//    1         g_screen (0..NUM_PAIRS-1 = gauge pair, NUM_PAIRS = graph)
+//    1         g_screen (0..NUM_PAIRS-1 = gauge pair, NUM_PAIRS = quad, NUM_PAIRS+1 = graph)
 //    2         g_nightMode flag
 //    3–4       g_brightDay, g_brightNight (0–100 each)
 //    5         unit flags (bit0=Celsius, bit1=kPa, bit2=Lambda, bit3=km/h)
@@ -19,6 +19,7 @@
 //    141       [reserved]
 //    142       g_graphSI signal index
 //    143       last rotation (0–3); 0xFF on first boot
+//    144–147   g_quadParam[4] signal indices
 // ============================================================
 
 void eepromLoad() {
@@ -30,6 +31,7 @@ void eepromLoad() {
     g_warnLow[s]   = PARAMS[DEFAULT_SLOTS[s]].warnLow;
     g_warnHigh[s]  = PARAMS[DEFAULT_SLOTS[s]].warnHigh;
   }
+  for (int i = 0; i < 4; i++) g_quadParam[i] = (uint8_t)i;
 
   if (EEPROM.read(EE_ADDR_MAGIC) != EE_MAGIC) {
     g_screen    = 0;
@@ -72,6 +74,11 @@ void eepromLoad() {
   uint8_t gsi = EEPROM.read(EE_ADDR_GRAPH_SI);
   if (gsi < NUM_SIGNALS) g_graphSI = gsi;
 
+  for (int i = 0; i < 4; i++) {
+    uint8_t v = EEPROM.read(EE_ADDR_QUAD + i);
+    if (v < NUM_SIGNALS) g_quadParam[i] = v;
+  }
+
   uint8_t savedRot = EEPROM.read(EE_ADDR_ROT);
   if (savedRot <= 3) {
     g_rotation    = savedRot;
@@ -99,6 +106,7 @@ void eepromSave() {
   }
   EEPROM.write(EE_ADDR_GRAPH_SI, g_graphSI);
   EEPROM.write(EE_ADDR_ROT,      g_rotation);
+  for (int i = 0; i < 4; i++) EEPROM.write(EE_ADDR_QUAD + i, g_quadParam[i]);
   EEPROM.commit();
   g_eeDirty = false;
   Serial.println("EEPROM saved");

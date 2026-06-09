@@ -65,6 +65,7 @@ void graphReset();
 // both included after TJR_touch.h in TJR_241.ino.
 void handlePickerTouch(int16_t tx, int16_t ty, bool touched);
 void openPicker(int slot);
+void openPickerQuad(int qi);
 void handleSettingsTouch(int16_t tx, int16_t ty, bool touched);
 
 
@@ -179,7 +180,7 @@ void handleTouch() {
         // Continue an active threshold drag (gauge only — graph has no bar).
         // Single-frame jumps > TOUCH_DRAG_JITTER px are suppressed — the touch
         // controller occasionally emits a bad coordinate on lift-off.
-        if (!isGraph() && g_warnDragging && g_dragSlot >= 0) {
+        if (!isGraph() && !isQuad() && g_warnDragging && g_dragSlot >= 0) {
             if (abs(tx - g_lastTx) > TOUCH_DRAG_JITTER) {
                 g_lastTx = tx; g_lastTy = ty; return;
             }
@@ -222,7 +223,7 @@ void handleTouch() {
             // On gauge: check if finger landed in a bar zone — arm drag timer.
             // On graph: no bar zones, fall through to OTA arm.
             bool inBarZone = false;
-            if (!isGraph()) {
+            if (!isGraph() && !isQuad()) {
                 BarCache *bc = nullptr; int slot = -1;
                 if (!g_isLandscape) {
                     if      (hitBar(tx, ty, g_barTop)) { bc = &g_barTop; slot = slotTop(g_screen); }
@@ -260,7 +261,7 @@ void handleTouch() {
         }
 
         // Pending drag promote — gauge only
-        if (!isGraph() && g_dragPending) {
+        if (!isGraph() && !isQuad() && g_dragPending) {
             if (abs(tx - g_sx0) > TOUCH_DRIFT_CANCEL || abs(ty - g_sy0) > TOUCH_DRIFT_CANCEL) {
                 // Finger moved — cancel pending drag
                 g_dragPending  = false;
@@ -286,13 +287,13 @@ void handleTouch() {
         g_otaHoldArmed = false;
 
         // End threshold drag
-        if (!isGraph() && g_warnDragging) {
+        if (!isGraph() && !isQuad() && g_warnDragging) {
             g_warnDragging = false;
             g_dragSlot     = -1;
             if (g_labelSlot >= 0) g_labelExpiry = millis() + 3000;
             return;
         }
-        if (!isGraph() && g_dragPending) {
+        if (!isGraph() && !isQuad() && g_dragPending) {
             g_dragPending  = false;
             g_dragPendSlot = -1;
         }
@@ -339,6 +340,10 @@ void handleTouch() {
             if (isGraph()) {
                 g_pickerForGraph = true;
                 openPicker(0);
+            } else if (isQuad()) {
+                int col = (g.sx < sw / 2) ? 0 : 1;
+                int row = (g.sy < sh / 2) ? 0 : 1;
+                openPickerQuad(row * 2 + col);
             } else {
                 int tapSlot = g_isLandscape ? slotLS(g_screen)
                             : (g.sy < sh / 2) ? slotTop(g_screen) : slotBot(g_screen);
@@ -379,18 +384,21 @@ void checkWarnJump() {
         return;
     }
 
-    // Stay put if the current pair already has an active warning
-    if (g_isLandscape) {
-        int   s = slotLS(g_screen);
-        float v = g_val[g_slotParam[s]];
-        if (inDanger(s, v) || inWarn(s, v)) { g_warnFirstMs = 0; return; }
-    } else {
-        int   topS = slotTop(g_screen), botS = slotBot(g_screen);
-        float vT   = g_val[g_slotParam[topS]], vB = g_val[g_slotParam[botS]];
-        if (inDanger(topS, vT) || inWarn(topS, vT) ||
-            inDanger(botS, vB) || inWarn(botS, vB)) {
-            g_warnFirstMs = 0;
-            return;
+    // Stay put if the current pair already has an active warning.
+    // Quad screen has no alert colours, so it never counts as "active warning".
+    if (!isQuad()) {
+        if (g_isLandscape) {
+            int   s = slotLS(g_screen);
+            float v = g_val[g_slotParam[s]];
+            if (inDanger(s, v) || inWarn(s, v)) { g_warnFirstMs = 0; return; }
+        } else {
+            int   topS = slotTop(g_screen), botS = slotBot(g_screen);
+            float vT   = g_val[g_slotParam[topS]], vB = g_val[g_slotParam[botS]];
+            if (inDanger(topS, vT) || inWarn(topS, vT) ||
+                inDanger(botS, vB) || inWarn(botS, vB)) {
+                g_warnFirstMs = 0;
+                return;
+            }
         }
     }
 

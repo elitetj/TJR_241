@@ -40,12 +40,28 @@ static void pickerBuildOrder() {
 }
 
 void openPicker(int slot) {
-    g_pickerSlot   = slot;
-    g_pickerScroll = 0;
-    g_pickerOpen   = true;
+    g_pickerForQuad = false;
+    g_pickerSlot    = slot;
+    g_pickerScroll  = 0;
+    g_pickerOpen    = true;
     pickerBuildOrder();
-    // Scroll so the currently assigned signal is already in view
     uint8_t curSI = g_slotParam[slot];
+    for (int i = 0; i < NUM_SIGNALS; i++) {
+        if (g_pickerOrder[i] == curSI) {
+            g_pickerScroll = max(0, i - 2);
+            break;
+        }
+    }
+}
+
+void openPickerQuad(int qi) {
+    g_pickerForQuad  = true;
+    g_pickerQuadIdx  = qi;
+    g_pickerSlot     = -1;
+    g_pickerScroll   = 0;
+    g_pickerOpen     = true;
+    pickerBuildOrder();
+    uint8_t curSI = g_quadParam[qi];
     for (int i = 0; i < NUM_SIGNALS; i++) {
         if (g_pickerOrder[i] == curSI) {
             g_pickerScroll = max(0, i - 2);
@@ -72,7 +88,9 @@ void drawPicker() {
     fbHLine(0, hdrH, sw, colDim());
 
     // ── List rows ────────────────────────────────────────────────────────────
-    uint8_t curSI = (g_pickerForGraph) ? g_graphSI : (uint8_t)g_slotParam[g_pickerSlot];
+    uint8_t curSI = g_pickerForGraph ? g_graphSI
+                  : g_pickerForQuad  ? g_quadParam[g_pickerQuadIdx]
+                  :                    (uint8_t)g_slotParam[g_pickerSlot];
     for (int row = 0; row < nVis; row++) {
         int idx = g_pickerScroll + row;
         if (idx >= NUM_SIGNALS) break;
@@ -145,6 +163,10 @@ void handlePickerTouch(int16_t tx, int16_t ty, bool touched) {
                     g_graphSI        = si;
                     g_pickerForGraph = false;
                     graphReset();
+                    markDirty();
+                } else if (g_pickerForQuad) {
+                    g_quadParam[g_pickerQuadIdx] = si;
+                    g_pickerForQuad = false;
                     markDirty();
                 } else {
                     if (si != g_slotParam[g_pickerSlot]) {

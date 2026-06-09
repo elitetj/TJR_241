@@ -856,3 +856,100 @@ void drawLandscape() {
 
     fbFlush();
 }
+
+
+// ============================================================
+//  DRAW — QUAD CELL
+//  One cell of the 2×2 four-parameter screen.
+//  No bar, no threshold drag.  Value always white/night.
+// ============================================================
+
+#define QUAD_PAD 12
+
+// Advance-based centering within an arbitrary horizontal band [cx, cx+cw).
+// Used for quad cell values so centering doesn't depend on scrW().
+static void printCellCentredMono(const char *str,
+                                  int16_t cx, int16_t cw, int16_t y_top,
+                                  uint16_t col, const GFXfont *font) {
+    int16_t adv = monoAdvance(font);
+    int16_t x;
+    if (adv > 0)
+        x = cx + (cw - adv * (int16_t)strlen(str)) / 2;
+    else {
+        int16_t x1 = firstXOff(str, font);
+        x = cx + (cw - strW(str, font)) / 2 - x1;
+    }
+    fbStr(str, x, baselineY(y_top, font), col, font);
+}
+
+static void drawQuadCell(int /*qi*/, int si, float v, float pk,
+                         int16_t cx, int16_t cy,
+                         int16_t cw, int16_t ch) {
+    uint16_t lblCol = g_nightMode ? C_NIGHT : C_WHITE;
+
+    // Label row: name only (unit omitted — space too tight in quad cells)
+    int16_t labelTopY = cy + 10;
+    printLeft(PARAMS[si].name, cx + QUAD_PAD, labelTopY, lblCol, FONT_LABEL);
+
+    // MIN/MAX footer: min value left, max value right
+    char mnBuf[14], mxBuf[14];
+    fmtVal(mnBuf, sizeof(mnBuf), si, g_min[si]);
+    fmtVal(mxBuf, sizeof(mxBuf), si, pk);
+    int16_t footerY = cy + ch - 8 - fontH(FONT_LABEL);
+    uint16_t dc = colDim();
+    printLeftMono (mnBuf, cx + QUAD_PAD,       footerY, dc, FONT_LABEL);
+    printRightMono(mxBuf, cx + cw - QUAD_PAD,  footerY, dc, FONT_LABEL);
+
+    // Value centred vertically in the band between label and footer
+    int16_t valueTop = labelTopY + fontH(FONT_LABEL) + 4;
+    int16_t valueBot = footerY - 4;
+    int16_t valueH   = valueBot - valueTop;
+
+    char vbuf[14];
+    fmtVal(vbuf, sizeof(vbuf), si, v);
+
+    // Try 90px (FONT_VALUE_L3), fall back to 56px (FONT_VALUE_L4) if too wide or tall
+    const GFXfont *vfont = FONT_VALUE_L3;
+    {
+        int16_t adv = monoAdvance(vfont);
+        int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
+        if (vw > cw - QUAD_PAD * 2 || fontH(vfont) > valueH)
+            vfont = FONT_VALUE_L4;
+    }
+    int16_t fh      = fontH(vfont);
+    int16_t valTopY = valueTop + (valueH - fh) / 2;
+    if (valTopY < valueTop) valTopY = valueTop;
+    printCellCentredMono(vbuf, cx, cw, valTopY, lblCol, vfont);
+}
+
+
+// ============================================================
+//  DRAW — QUAD FRAME
+//  2×2 grid, both landscape (300×225 cells) and portrait (225×300 cells).
+//  No bars or threshold drag.  No alert colours or flash border.
+// ============================================================
+
+void drawQuad() {
+    int16_t sw = scrW();
+    int16_t sh = scrH();
+    int16_t cw = sw / 2;
+    int16_t ch = sh / 2;
+
+    fbFill(C_BG);
+
+    for (int row = 0; row < 2; row++) {
+        for (int col = 0; col < 2; col++) {
+            int qi = row * 2 + col;
+            int si = g_quadParam[qi];
+            drawQuadCell(qi, si, g_val[si], g_peak[si],
+                         col * cw, row * ch, cw, ch);
+        }
+    }
+
+    // Subtle divider lines
+    uint16_t dc = colDim();
+    fbVLine(cw, 0,  sh, dc);
+    fbHLine(0,  ch, sw, dc);
+
+    fbFlush();
+}
