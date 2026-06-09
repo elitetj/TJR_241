@@ -33,6 +33,11 @@ void eepromLoad() {
   }
   for (int i = 0; i < 4; i++) g_quadParam[i] = (uint8_t)i;
 
+  // Duo-HS defaults: RPM top, OIL PRES bottom (signal indices 0 and 4)
+  g_slotParam[SLOT_DUO_TOP] = 0;  g_slotParam[SLOT_DUO_BOT] = 4;
+  g_warnLow [SLOT_DUO_TOP]  = PARAMS[0].warnLow;   g_warnHigh[SLOT_DUO_TOP] = PARAMS[0].warnHigh;
+  g_warnLow [SLOT_DUO_BOT]  = PARAMS[4].warnLow;   g_warnHigh[SLOT_DUO_BOT] = PARAMS[4].warnHigh;
+
   if (EEPROM.read(EE_ADDR_MAGIC) != EE_MAGIC) {
     g_screen    = 0;
     g_nightMode = false;
@@ -79,6 +84,20 @@ void eepromLoad() {
     if (v < NUM_SIGNALS) g_quadParam[i] = v;
   }
 
+  {
+    uint8_t vT = EEPROM.read(EE_ADDR_DUO_SLOTS);
+    uint8_t vB = EEPROM.read(EE_ADDR_DUO_SLOTS + 1);
+    if (vT < NUM_SIGNALS) g_slotParam[SLOT_DUO_TOP] = vT;
+    if (vB < NUM_SIGNALS) g_slotParam[SLOT_DUO_BOT] = vB;
+    float lo, hi;
+    EEPROM.get(EE_ADDR_DUO_WARNLO,     lo); EEPROM.get(EE_ADDR_DUO_WARNHI,     hi);
+    if (isfinite(lo) || (isinf(lo) && lo < 0)) g_warnLow [SLOT_DUO_TOP] = lo;
+    if (isfinite(hi) || (isinf(hi) && hi > 0)) g_warnHigh[SLOT_DUO_TOP] = hi;
+    EEPROM.get(EE_ADDR_DUO_WARNLO + 4, lo); EEPROM.get(EE_ADDR_DUO_WARNHI + 4, hi);
+    if (isfinite(lo) || (isinf(lo) && lo < 0)) g_warnLow [SLOT_DUO_BOT] = lo;
+    if (isfinite(hi) || (isinf(hi) && hi > 0)) g_warnHigh[SLOT_DUO_BOT] = hi;
+  }
+
   uint8_t savedRot = EEPROM.read(EE_ADDR_ROT);
   if (savedRot <= 3) {
     g_rotation    = savedRot;
@@ -107,6 +126,12 @@ void eepromSave() {
   EEPROM.write(EE_ADDR_GRAPH_SI, g_graphSI);
   EEPROM.write(EE_ADDR_ROT,      g_rotation);
   for (int i = 0; i < 4; i++) EEPROM.write(EE_ADDR_QUAD + i, g_quadParam[i]);
+  EEPROM.write(EE_ADDR_DUO_SLOTS,     g_slotParam[SLOT_DUO_TOP]);
+  EEPROM.write(EE_ADDR_DUO_SLOTS + 1, g_slotParam[SLOT_DUO_BOT]);
+  EEPROM.put(EE_ADDR_DUO_WARNLO,     g_warnLow [SLOT_DUO_TOP]);
+  EEPROM.put(EE_ADDR_DUO_WARNHI,     g_warnHigh[SLOT_DUO_TOP]);
+  EEPROM.put(EE_ADDR_DUO_WARNLO + 4, g_warnLow [SLOT_DUO_BOT]);
+  EEPROM.put(EE_ADDR_DUO_WARNHI + 4, g_warnHigh[SLOT_DUO_BOT]);
   EEPROM.commit();
   g_eeDirty = false;
   Serial.println("EEPROM saved");

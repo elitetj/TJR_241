@@ -86,7 +86,7 @@
 //   MAX value row  (FONT_LABEL ~36 px):   36 px
 //   bottom margin:                          8 px
 //   ≈ 130 px total  →  use 110 (handles overlap bar zone, label rows share space)
-#define PORTRAIT_BAR_REGION   110
+#define PORTRAIT_BAR_REGION    90
 
 
 // ── Landscape geometry ────────────────────────────────────────────────────────

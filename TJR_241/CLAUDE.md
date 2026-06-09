@@ -257,9 +257,9 @@ GFXglyph fonts (via `ttf2gfx.py`) for all other text: labels, units, MIN/MAX, se
 | `TJR_display.h` | **Done** | All hardware verified — all 4 orientations confirmed |
 | `TJR_gfxfont.h` | **Done** | GFXfont/GFXglyph struct defs (no Arduino_GFX dep) |
 | `TJR_layout.h` | **Done** | 600×450 geometry, font aliases |
-| `TJR_draw.h` | **Done** | Full draw layer: fb primitives + GFXfont blitter + sprite blitter + gauge draw |
-| `TJR_241.ino` | **Done v0.10** | Full loop: all subsystems wired, all orientations confirmed ~20fps |
-| `TJR_touch.h` | **Done** | Gesture system, warn auto-jump, threshold drag, all 4 rotations confirmed |
+| `TJR_draw.h` | **Done** | Full draw layer: fb primitives + GFXfont blitter + sprite blitter + all gauge screens |
+| `TJR_241.ino` | **Done v0.15** | Quad screen, duo-HS screen, portrait/landscape separation, splash fade |
+| `TJR_touch.h` | **Done** | Gesture system, warn auto-jump, threshold drag, all 4 rotations, duo-HS portrait handling |
 | `TJR_settings.h` | **Done** | Units + brightness overlay, slider drag |
 | `TJR_picker.h` | **Done** | Signal picker, alpha-sorted, scrollable |
 | `TJR_graph.h` | **Done** | Rolling graph screen, 600×450 layout |
@@ -270,6 +270,42 @@ GFXglyph fonts (via `ttf2gfx.py`) for all other text: labels, units, MIN/MAX, se
 | `Tools/gen_digit_sprites.py` | **Done** | Pillow-based generator — run to regenerate at any size |
 
 > **Before committing any functional change:** bump `FW_VERSION` in `TJR_241.ino`.
+
+---
+
+## Screen Architecture (v0.15)
+
+Swipe order: **pair screens** (0..NUM_PAIRS-1) → **duo-HS** (NUM_PAIRS) → **quad** (NUM_PAIRS+1) → **graph** (NUM_PAIRS+2)
+
+`NUM_SCREENS = NUM_PAIRS + 3`
+
+### Duo-HS screen — horizontal-split 2-slot (slots 15/16)
+
+- **Landscape:** two full-width (600×225) stacked slots. Full bar + warn handle drag. Alert colours + flash border. Value cascade 130px→90px→56px. Min/max bare values above bar in FONT_DTC (28px). `DUO_BAR_BOT=32` (bar near bottom, low-handle triangle tip at slot boundary).
+- **Portrait:** calls `drawSlot()` identical to all other portrait pair screens. Touch handler: `isDuoHS() && !g_isLandscape` → uses `g_barTop`/`g_barBot` (not `g_barDuoTop`/`g_barDuoBot`).
+
+### Quad screen (slots g_quadParam[4])
+
+2×2 grid, both orientations. No bar, no alert colours — always white/night. 90px→56px per cell. MIN/MAX bare values (no labels) in cell footer. Tap cell → signal picker.
+
+### EEPROM additive layout (EE_SIZE=166)
+
+| Offset | Content |
+|--------|---------|
+| 0–143 | Original pair block (magic, screen, night, brightness, units, 15 slots, 15×warnLow, 15×warnHigh, reserved, graphSI, rotation) |
+| 144–147 | g_quadParam[4] |
+| 148–149 | duo slot indices (SLOT_DUO_TOP=15, SLOT_DUO_BOT=16) |
+| 150–157 | duo warnLow (2×float) |
+| 158–165 | duo warnHigh (2×float) |
+
+---
+
+## Pending Work
+
+| Item | Notes |
+|------|-------|
+| **CAN activation** | Recipe in TJR_mini v1.0 — see project memory [[tjr-mini-can-activation]]. Adjust `FONT_LABEL_H` for ShareTechMono_36px. |
+| **Colour picker** | User-selectable colours for live value, warn-high, and warn-low. Accessible from settings. Persisted to EEPROM. |
 
 ---
 

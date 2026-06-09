@@ -210,7 +210,7 @@ For the 2.41" we use **pre-rendered 1bpp digit sprites** at 220px — no size ce
 **Files:**
 - `Tools/gen_digit_sprites.py` — Python/Pillow generator. Run once to regenerate the header:  
   `python3 Tools/gen_digit_sprites.py ShareTechMono-Regular.ttf 220 ShareTechMono_220px_sprites.h ShareTechMono_220px`  
-  (TTF source is in TJR_mini/ — copy or symlink as needed)
+  (TTF source is in Fonts/ at repo root)
 - `TJR_spritefont.h` — `SpriteGlyph` / `SpriteFont` struct defs
 - `ShareTechMono_220px_sprites.h` — generated 1bpp data (24 KB, 13 glyphs)
 

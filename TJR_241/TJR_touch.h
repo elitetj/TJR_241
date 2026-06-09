@@ -185,8 +185,16 @@ void handleTouch() {
                 g_lastTx = tx; g_lastTy = ty; return;
             }
             int      dragSI = g_slotParam[g_dragSlot];
-            BarCache *bc    = g_isLandscape ? &g_barLS
-                            : (g_dragSlot == slotTop(g_screen)) ? &g_barTop : &g_barBot;
+            BarCache *bc;
+            if (isDuoHS() && g_isLandscape)
+                bc = (g_dragSlot == SLOT_DUO_TOP) ? &g_barDuoTop : &g_barDuoBot;
+            else if (g_isLandscape)
+                bc = &g_barLS;
+            else {
+                bool isTop = isDuoHS() ? (g_dragSlot == SLOT_DUO_TOP)
+                                       : (g_dragSlot == slotTop(g_screen));
+                bc = isTop ? &g_barTop : &g_barBot;
+            }
             float newVal = barTouchToVal(dragSI, tx, *bc);
             float margin = (PARAMS[dragSI].displayMax - PARAMS[dragSI].displayMin) * 0.01f;
             float step   = PARAMS[dragSI].snapStep;
@@ -225,7 +233,13 @@ void handleTouch() {
             bool inBarZone = false;
             if (!isGraph() && !isQuad()) {
                 BarCache *bc = nullptr; int slot = -1;
-                if (!g_isLandscape) {
+                if (isDuoHS() && g_isLandscape) {
+                    if      (hitBar(tx, ty, g_barDuoTop)) { bc = &g_barDuoTop; slot = SLOT_DUO_TOP; }
+                    else if (hitBar(tx, ty, g_barDuoBot)) { bc = &g_barDuoBot; slot = SLOT_DUO_BOT; }
+                } else if (isDuoHS()) {
+                    if      (hitBar(tx, ty, g_barTop)) { bc = &g_barTop; slot = SLOT_DUO_TOP; }
+                    else if (hitBar(tx, ty, g_barBot)) { bc = &g_barBot; slot = SLOT_DUO_BOT; }
+                } else if (!g_isLandscape) {
                     if      (hitBar(tx, ty, g_barTop)) { bc = &g_barTop; slot = slotTop(g_screen); }
                     else if (hitBar(tx, ty, g_barBot)) { bc = &g_barBot; slot = slotBot(g_screen); }
                 } else {
@@ -344,6 +358,8 @@ void handleTouch() {
                 int col = (g.sx < sw / 2) ? 0 : 1;
                 int row = (g.sy < sh / 2) ? 0 : 1;
                 openPickerQuad(row * 2 + col);
+            } else if (isDuoHS()) {
+                openPicker(g.sy < sh / 2 ? SLOT_DUO_TOP : SLOT_DUO_BOT);
             } else {
                 int tapSlot = g_isLandscape ? slotLS(g_screen)
                             : (g.sy < sh / 2) ? slotTop(g_screen) : slotBot(g_screen);
@@ -384,9 +400,15 @@ void checkWarnJump() {
         return;
     }
 
-    // Stay put if the current pair already has an active warning.
-    // Quad screen has no alert colours, so it never counts as "active warning".
-    if (!isQuad()) {
+    // Stay put if the current screen already has an active warning.
+    // Quad screen has no alert colours — never counts as active warning.
+    if (isDuoHS()) {
+        float vT = g_val[g_slotParam[SLOT_DUO_TOP]], vB = g_val[g_slotParam[SLOT_DUO_BOT]];
+        if (inDanger(SLOT_DUO_TOP, vT) || inWarn(SLOT_DUO_TOP, vT) ||
+            inDanger(SLOT_DUO_BOT, vB) || inWarn(SLOT_DUO_BOT, vB)) {
+            g_warnFirstMs = 0; return;
+        }
+    } else if (!isQuad()) {
         if (g_isLandscape) {
             int   s = slotLS(g_screen);
             float v = g_val[g_slotParam[s]];
@@ -424,6 +446,19 @@ void checkWarnJump() {
                 if ((inDanger(s, v) || inWarn(s, v)) && sig < bestSig) {
                     bestSig = sig; bestPair = p;
                 }
+            }
+        }
+    }
+
+    // Also scan duo-HS screen if we're not currently on it
+    if (!isDuoHS()) {
+        int slots[2] = { SLOT_DUO_TOP, SLOT_DUO_BOT };
+        for (int i = 0; i < 2; i++) {
+            int   s   = slots[i];
+            int   sig = g_slotParam[s];
+            float v   = g_val[sig];
+            if ((inDanger(s, v) || inWarn(s, v)) && sig < bestSig) {
+                bestSig = sig; bestPair = NUM_PAIRS;
             }
         }
     }

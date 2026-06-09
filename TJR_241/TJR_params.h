@@ -22,7 +22,7 @@
 
 
 // ── Signal / slot counts ─────────────────────────────────────────────────────
-#define NUM_SIGNALS  60
+#define NUM_SIGNALS  75
 #define NUM_PAIRS     5
 #define NUM_SLOTS    15
 
@@ -167,6 +167,36 @@ static const ParamDef PARAMS[NUM_SIGNALS] = {
 {0x473,4,4,false,true, 0x20, 32.0f,0, "ANTILAG",    "",      0,    1,    0,    0,    0,    1, 0, 1.0f, UNIT_TYPE_NONE},
 // [59] Pit Lane Speed Limiter Active
 {0x3E5,3,3,false,true, 0x20, 32.0f,0, "PIT LIM",    "",      0,    1,    0,    0,    0,    1, 0, 1.0f, UNIT_TYPE_NONE},
+// [60] Coolant Pressure — gauge kPa (0x360 bytes 6-7)
+{0x360,6,7,false,false,0, 10.0f,101.3f,"COOL PRES",  "kPa",  -50,  300,  -50,  250, -100,  300, 1, 1.0f, UNIT_TYPE_PRESS_G},
+// [61] Injection Stage 2 Duty Cycle (0x362 bytes 2-3)
+{0x362,2,3,false,false,0, 10.0f,  0,  "INJ DC2",     "%",      0,   100,    5,   85,    0,  100, 1, 1.0f, UNIT_TYPE_NONE},
+// [62] Trigger Counter — raw count (0x369 bytes 2-3)
+{0x369,2,3,false,false,0,  1.0f,  0,  "TRIG CNT",    "",       0, 65535,    0,    0,    0,65535, 0, 1.0f, UNIT_TYPE_NONE},
+// [63] NOS Pressure Sensor 1 — gauge kPa (0x36B bytes 2-3, y=x*11/50-101.3)
+{0x36B,2,3,false,false,0, 50.0f/11.0f,101.3f,"NOS PRES1","kPa", 0,14000,    0,12000,    0,14316, 1, 1.0f, UNIT_TYPE_PRESS_G},
+// [64] Exhaust Cam Angle 1 — signed degrees (0x36D bytes 4-5)
+{0x36D,4,5,true, false,0, 10.0f,  0,  "EXH CAM1",   "deg",   -50,   50,  -40,   40,  -60,   60, 1, 1.0f, UNIT_TYPE_NONE},
+// [65] Exhaust Cam Angle 2 — signed degrees (0x36D bytes 6-7)
+{0x36D,6,7,true, false,0, 10.0f,  0,  "EXH CAM2",   "deg",   -50,   50,  -40,   40,  -60,   60, 1, 1.0f, UNIT_TYPE_NONE},
+// [66] Generic Output 1 Duty Cycle (0x36F bytes 0-1)
+{0x36F,0,1,false,false,0, 10.0f,  0,  "GEN OUT1",    "%",      0,   100,    0,  100,    0,  100, 1, 1.0f, UNIT_TYPE_NONE},
+// [67] Boost Control Output (0x36F bytes 2-3)
+{0x36F,2,3,false,false,0, 10.0f,  0,  "BST CTRL",    "%",      0,   100,    0,  100,    0,  100, 1, 1.0f, UNIT_TYPE_NONE},
+// [68] Intake Cam Angle 1 — signed degrees (0x370 bytes 4-5)
+{0x370,4,5,true, false,0, 10.0f,  0,  "INT CAM1",   "deg",   -50,   50,  -40,   40,  -60,   60, 1, 1.0f, UNIT_TYPE_NONE},
+// [69] Intake Cam Angle 2 — signed degrees (0x370 bytes 6-7)
+{0x370,6,7,true, false,0, 10.0f,  0,  "INT CAM2",   "deg",   -50,   50,  -40,   40,  -60,   60, 1, 1.0f, UNIT_TYPE_NONE},
+// [70] Diff Oil Temperature — Kelvin (0x3E1 bytes 2-3)
+{0x3E1,2,3,false,false,0, 10.0f,  0,  "DIFF TEMP",  "K",     278,  423,  323,  393,  273,  408, 0, 1.0f, UNIT_TYPE_TEMP},
+// [71] Fuel Trim Short Term Bank 2 — signed % (0x3E3 bytes 2-3)
+{0x3E3,2,3,true, false,0, 10.0f,  0,  "ST TRIM B2", "%",     -25,   25,  -15,   15,  -25,   25, 1, 1.0f, UNIT_TYPE_NONE},
+// [72] Fuel Trim Long Term Bank 2 — signed % (0x3E3 bytes 6-7)
+{0x3E3,6,7,true, false,0, 10.0f,  0,  "LT TRIM B2", "%",     -25,   25,  -15,   15,  -25,   25, 1, 1.0f, UNIT_TYPE_NONE},
+// [73] Target Lambda (0x3E9 bytes 4-5)
+{0x3E9,4,5,false,false,0,1000.0f, 0,  "TGT LAM",    "Lam",  0.6f, 1.6f,0.75f,1.25f, 0.6f, 1.6f, 3,0.005f,UNIT_TYPE_LAMBDA},
+// [74] Injector Pressure Differential — signed kPa (0x471 bytes 0-1)
+{0x471,0,1,true, false,0, 10.0f,  0,  "INJ P DIFF", "kPa",  -100, 1000, -100,  800, -100, 1000, 1, 1.0f, UNIT_TYPE_PRESS_G},
 };
 
 
@@ -184,9 +214,13 @@ static const uint8_t DEFAULT_SLOTS[NUM_SLOTS] = {
 
 
 // ── Slot assignments and per-slot warn thresholds ────────────────────────────
-uint8_t g_slotParam[NUM_SLOTS];    // signal index shown in each slot
-float   g_warnLow [NUM_SLOTS];
-float   g_warnHigh[NUM_SLOTS];
+// NUM_SLOTS (15) covers pair-screen slots 0..14.
+// Two extra entries (15=SLOT_DUO_TOP, 16=SLOT_DUO_BOT) back the duo-HS screen;
+// their EEPROM persistence lives at EE_ADDR_DUO_* (separate from the main block).
+#define NUM_SLOTS_TOTAL 17
+uint8_t g_slotParam[NUM_SLOTS_TOTAL];
+float   g_warnLow [NUM_SLOTS_TOTAL];
+float   g_warnHigh[NUM_SLOTS_TOTAL];
 
 // Helper: returns the ParamDef for whatever signal is currently in a slot
 inline const ParamDef &slotDef(int slot) { return PARAMS[g_slotParam[slot]]; }

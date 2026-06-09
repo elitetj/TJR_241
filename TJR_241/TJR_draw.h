@@ -699,40 +699,39 @@ void drawSlot(int slot, int si, float v, float peak,
 
     int16_t valueArea = barY - labelBotY - 4;
 
-    // Choose value font: primary, then fallback if string too wide or tall
+    // Value cascade: 130px → 100px → 56px
     char vbuf[14];
     fmtVal(vbuf, sizeof(vbuf), si, v);
 
-    const GFXfont *vfont = FONT_VALUE_P;
-    {
+    const GFXfont *steps[] = { FONT_VALUE_L2, FONT_VALUE_P, FONT_VALUE_P_FB };
+    const GFXfont *vfont   = FONT_VALUE_P_FB;
+    for (int s = 0; s < 3; s++) {
+        vfont       = steps[s];
         int16_t adv = monoAdvance(vfont);
         int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
-        if (vw > sw - 20 || fontH(vfont) > valueArea)
-            vfont = FONT_VALUE_P_FB;
+        if (vw <= sw - 20 && fontH(vfont) <= valueArea) break;
     }
 
-    // Value centred in value area using advance-based width
     int16_t fh      = fontH(vfont);
     int16_t valTopY = labelBotY + (valueArea - fh) / 2;
     if (valTopY < labelBotY) valTopY = labelBotY;
     printCentredMono(vbuf, valTopY, colValue(slot, v), vfont);
 
-    // Bar (stores geometry in cache for touch handler)
+    // Bar
     BarCache *bc = (slotY == 0) ? &g_barTop : &g_barBot;
     drawBar(slot, si, v, peak, PAD, barY, barW2, PORTRAIT_BAR_H, bc);
 
-    // MIN / MAX persistent footer (two rows: label, then value)
+    // MIN / MAX footer — single row, side-by-side (matches landscape layout)
     {
-        char mnBuf[14], mxBuf[14];
+        char mnBuf[14], mxBuf[14], lMin[22], lMax[22];
         fmtVal(mnBuf, sizeof(mnBuf), si, g_min[si]);
         fmtVal(mxBuf, sizeof(mxBuf), si, peak);
-        int16_t labelRow = barY + PORTRAIT_BAR_H + 22;
-        int16_t valueRow = labelRow + fontH(FONT_LABEL) + 4;
+        snprintf(lMin, sizeof(lMin), "MIN %s", mnBuf);
+        snprintf(lMax, sizeof(lMax), "MAX %s", mxBuf);
+        int16_t footerY = barY + PORTRAIT_BAR_H + 22;
         uint16_t dc = colDim();
-        printLeft    ("MIN", PAD,       labelRow, dc, FONT_LABEL);
-        printRight   ("MAX", sw - PAD,  labelRow, dc, FONT_LABEL);
-        printLeftMono (mnBuf, PAD,      valueRow, dc, FONT_LABEL);
-        printRightMono(mxBuf, sw - PAD, valueRow, dc, FONT_LABEL);
+        printLeftMono (lMin, PAD,       footerY, dc, FONT_LABEL);
+        printRightMono(lMax, sw - PAD,  footerY, dc, FONT_LABEL);
     }
 }
 
@@ -950,6 +949,102 @@ void drawQuad() {
     uint16_t dc = colDim();
     fbVLine(cw, 0,  sh, dc);
     fbHLine(0,  ch, sw, dc);
+
+    fbFlush();
+}
+
+
+// ============================================================
+//  DRAW — DUO HORIZONTAL-SPLIT SLOT
+//  One half of the duo-HS screen: a full-width 600×(scrH/2) band.
+//  Same structure as the landscape screen but half-height.
+//  Bar + warn handles + drag label + MIN/MAX footer all present.
+// ============================================================
+
+static void drawDuoHSSlot(int slot, int si, float v, float pk,
+                           int16_t slotY, int16_t slotH, BarCache *bc) {
+    int16_t sw  = scrW();
+    int16_t PAD = LANDSCAPE_PAD;
+    uint16_t lblCol = g_nightMode ? C_NIGHT : C_WHITE;
+
+    // Label row: name left, unit right
+    int16_t labelTopY = slotY + 12;
+    printLeft (PARAMS[si].name, PAD,      labelTopY, lblCol, FONT_LABEL);
+    printRight(displayUnit(si), sw - PAD, labelTopY, lblCol, FONT_LABEL);
+
+    int16_t labelBotY = labelTopY + fontH(FONT_LABEL) + 2;
+
+    // Bar near the bottom; low-handle triangle tip lands at slot boundary (32px minimum).
+    const int16_t DUO_BAR_BOT = 32;
+    int16_t barY = slotY + slotH - DUO_BAR_BOT;
+    int16_t barW = sw - PAD * 2;
+
+    // Min/max values above the high-handle zone (handle extends ~16px above barY).
+    int16_t mmFontH  = fontH(FONT_DTC);
+    int16_t minMaxY  = barY - 16 - mmFontH;
+
+    // Value cascade: 130px → 90px → 56px, fitted between label and min/max row
+    int16_t valueArea = minMaxY - labelBotY - 8;
+    char vbuf[14];
+    fmtVal(vbuf, sizeof(vbuf), si, v);
+
+    const GFXfont *steps[] = { FONT_VALUE_L2, FONT_VALUE_L3, FONT_VALUE_L4 };
+    const GFXfont *vfont   = FONT_VALUE_L4;
+    for (int s = 0; s < 3; s++) {
+        vfont       = steps[s];
+        int16_t adv = monoAdvance(vfont);
+        int16_t vw  = adv > 0 ? adv * (int16_t)strlen(vbuf) : strW(vbuf, vfont);
+        if (vw <= sw - PAD * 2 && fontH(vfont) <= valueArea) break;
+    }
+    int16_t fh      = fontH(vfont);
+    int16_t valTopY = labelBotY + (valueArea - fh) / 2;
+    if (valTopY < labelBotY) valTopY = labelBotY;
+    printCentredMono(vbuf, valTopY, colValue(slot, v), vfont);
+
+    // Min/max values above the bar — no "MIN"/"MAX" labels, compact font
+    {
+        char mnBuf[14], mxBuf[14];
+        fmtVal(mnBuf, sizeof(mnBuf), si, g_min[si]);
+        fmtVal(mxBuf, sizeof(mxBuf), si, pk);
+        uint16_t dc = colDim();
+        printLeftMono (mnBuf, PAD,       minMaxY, dc, FONT_DTC);
+        printRightMono(mxBuf, sw - PAD,  minMaxY, dc, FONT_DTC);
+    }
+
+    drawBar(slot, si, v, pk, PAD, barY, barW, LANDSCAPE_BAR_H, bc);
+}
+
+
+// ============================================================
+//  DRAW — DUO HORIZONTAL-SPLIT FRAME
+//  Two full-width slots stacked top/bottom, each scrH/2 tall.
+//  Full alert colours and flash border.
+// ============================================================
+
+void drawDuoHS() {
+    int16_t sw    = scrW();
+    int16_t sh    = scrH();
+    int16_t slotH = sh / 2;
+
+    fbFill(C_BG);
+
+    int   siT = g_slotParam[SLOT_DUO_TOP], siB = g_slotParam[SLOT_DUO_BOT];
+    float vT  = g_val[siT],                 vB  = g_val[siB];
+
+    if (g_isLandscape) {
+        drawDuoHSSlot(SLOT_DUO_TOP, siT, vT, g_peak[siT], 0,     slotH, &g_barDuoTop);
+        drawDuoHSSlot(SLOT_DUO_BOT, siB, vB, g_peak[siB], slotH, slotH, &g_barDuoBot);
+    } else {
+        drawSlot(SLOT_DUO_TOP, siT, vT, g_peak[siT], 0,     slotH);
+        drawSlot(SLOT_DUO_BOT, siB, vB, g_peak[siB], slotH, slotH);
+    }
+
+    fbHLine(0, slotH, sw, colDim());
+
+    uint16_t alertCol = 0;
+    if      (inDanger(SLOT_DUO_TOP, vT) || inDanger(SLOT_DUO_BOT, vB)) alertCol = C_DANGER;
+    else if (inWarn  (SLOT_DUO_TOP, vT) || inWarn  (SLOT_DUO_BOT, vB)) alertCol = C_WARN;
+    drawFlashBorder(alertCol);
 
     fbFlush();
 }

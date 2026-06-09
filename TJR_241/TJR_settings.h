@@ -72,7 +72,6 @@ void drawSettings() {
     // Unit label strings — same in both orientations
     static const char *lblA[4] = { "degC", "kPa",  "Lam",  "km/h" };
     static const char *lblB[4] = { "degF", "psi",  "AFR",  "mph"  };
-    static const char *lblR[4] = { "TEMP", "PRES", "FUEL", "SPEED" };
     bool *flags[4] = { &g_unitsCelsius, &g_unitsKpa, &g_unitsLambda, &g_unitsKmh };
 
     // ── Tab bar — identical in both orientations ──────────────────────────────
@@ -110,10 +109,6 @@ void drawSettings() {
             for (int r = 0; r < 4; r++) {
                 int16_t ry = cY + r * rowH;
                 g_setZUnits[r] = { 0, ry, lW, rowH };
-
-                // Row label — vertically centred
-                printLeft(lblR[r], SPAD, ry + (rowH - fhL) / 2,
-                          colDim(), FONT_LABEL);
 
                 // Two option buttons side by side
                 const char *lbls[2] = { lblA[r], lblB[r] };
@@ -214,10 +209,6 @@ void drawSettings() {
         for (int r = 0; r < 4; r++) {
             int16_t ry = cY + r * rowH;
             g_setZUnits[r] = { 0, ry, sw, rowH };
-
-            // Row label — vertically centred
-            printLeft(lblR[r], SPAD, ry + (rowH - fhL) / 2,
-                      colDim(), FONT_LABEL);
 
             const char *lbls[2] = { lblA[r], lblB[r] };
             for (int s = 0; s < 2; s++) {
